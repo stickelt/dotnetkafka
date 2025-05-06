@@ -1,0 +1,80 @@
+Perfect — now that you confirmed QA topic does have records and you're able to fetch them using:
+
+Start from = From the beginning
+
+Limit = 10
+
+Let's replicate this exact behavior in your Java KafkaConsumer code.
+
+✅ What We Need to Do in Java:
+Force auto.offset.reset = earliest (you already have this)
+
+Use a new or unique consumer group ID
+
+Poll and break after reading 10 records
+
+✅ Updated Code Snippet (for KafkaConsumerTest.java)
+Replace your while (true) loop with the following to stop after 10 records:
+
+java
+Copy
+Edit
+int maxRecords = 10;
+int totalRecords = 0;
+
+while (totalRecords < maxRecords) {
+    ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(5000));
+    if (records.isEmpty()) {
+        System.out.println("No messages received in this poll.");
+        break;
+    }
+
+    for (ConsumerRecord<String, String> record : records) {
+        System.out.println("----- RECORD -----");
+        System.out.printf("Offset: %d, Partition: %d%n", record.offset(), record.partition());
+        System.out.println("Key: " + record.key());
+        System.out.println("Value: " + record.value());
+        System.out.println("------------------");
+
+        totalRecords++;
+        if (totalRecords >= maxRecords) {
+            break; // exit inner loop early
+        }
+    }
+}
+
+consumer.close();
+✅ Ensure These Properties Are Set:
+Before you initialize the consumer:
+
+java
+Copy
+Edit
+props.put("group.id", "qa-consumer-" + UUID.randomUUID().toString()); // unique group
+props.put("auto.offset.reset", "earliest"); // start from the beginning
+Optional: Add Jackson JSON Pretty Printer
+If you want to print the JSON in a pretty format, add:
+
+java
+Copy
+Edit
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+
+ObjectMapper mapper = new ObjectMapper();
+ObjectWriter prettyPrinter = mapper.writerWithDefaultPrettyPrinter();
+Then replace:
+
+java
+Copy
+Edit
+System.out.println("Value: " + record.value());
+with:
+
+java
+Copy
+Edit
+System.out.println(prettyPrinter.writeValueAsString(mapper.readTree(record.value())));
+This will match exactly what the plugin is doing: pull the first 10 records from the beginning of the QA topic and print them.
+
+Let me know if you'd like to save them to a file or filter by code=400. 

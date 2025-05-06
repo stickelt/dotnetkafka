@@ -15,7 +15,7 @@ namespace KafkaConsumerDotNet
             Console.WriteLine("Kafka Consumer .NET Application");
             Console.WriteLine("-------------------------------");
 
-            // Load configuration
+            // Load configuration from appsettings.json
             var configuration = new ConfigurationBuilder()
                 .SetBasePath(Directory.GetCurrentDirectory())
                 .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
@@ -24,7 +24,7 @@ namespace KafkaConsumerDotNet
             var kafkaSettings = configuration.GetSection("KafkaSettings");
             var bootstrapServers = kafkaSettings["BootstrapServers"];
             var topic = kafkaSettings["Topic"];
-            var groupId = kafkaSettings["GroupId"];
+            var groupId = kafkaSettings["GroupId"] + "-" + Guid.NewGuid(); // force unique group ID
             var username = kafkaSettings["Username"];
             var password = kafkaSettings["Password"];
 
@@ -33,7 +33,7 @@ namespace KafkaConsumerDotNet
             Console.WriteLine($"Group ID: {groupId}");
             Console.WriteLine();
 
-            // Configure Kafka consumer
+            // Kafka consumer configuration
             var config = new ConsumerConfig
             {
                 BootstrapServers = bootstrapServers,
@@ -44,71 +44,63 @@ namespace KafkaConsumerDotNet
                 SaslMechanism = SaslMechanism.Plain,
                 SaslUsername = username,
                 SaslPassword = password,
+
+                // Helpful for debugging connection
+                Debug = "all"
             };
 
-            Console.WriteLine("Creating consumer instance...");
-            using (var consumer = new ConsumerBuilder<string, string>(config).Build())
+            Console.WriteLine("Creating Kafka consumer...");
+            using var consumer = new ConsumerBuilder<string, string>(config).Build();
+
+            consumer.Subscribe(topic);
+
+            var cts = new CancellationTokenSource();
+            Console.CancelKeyPress += (_, e) =>
             {
-                Console.WriteLine("Subscribing to topic...");
-                consumer.Subscribe(topic);
+                e.Cancel = true;
+                cts.Cancel();
+            };
 
-                var cts = new CancellationTokenSource();
-                Console.CancelKeyPress += (_, e) => {
-                    e.Cancel = true;
-                    cts.Cancel();
-                };
+            Console.WriteLine("Waiting for messages... (Ctrl+C to exit)\n");
 
-                Console.WriteLine("Starting consumption loop. Press Ctrl+C to exit.");
-                Console.WriteLine();
+            try
+            {
+                int maxMessages = 10;
+                int count = 0;
 
-                try
+                while (!cts.Token.IsCancellationRequested && count < maxMessages)
                 {
-                    while (!cts.Token.IsCancellationRequested)
+                    var result = consumer.Consume(cts.Token);
+
+                    Console.WriteLine($"Message received at: {DateTime.Now}");
+                    Console.WriteLine($"Key: {result.Message.Key}");
+                    Console.WriteLine($"Raw Value: {result.Message.Value}");
+
+                    try
                     {
-                        try
-                        {
-                            var consumeResult = consumer.Consume(cts.Token);
-                            
-                            Console.WriteLine($"Message received at: {DateTime.Now}");
-                            Console.WriteLine($"Key: {consumeResult.Message.Key}");
-                            
-                            var value = consumeResult.Message.Value;
-                            Console.WriteLine($"Value: {value}");
-                            
-                            // Try to parse JSON for pretty printing
-                            try
-                            {
-                                using (JsonDocument doc = JsonDocument.Parse(value))
-                                {
-                                    var options = new JsonSerializerOptions { WriteIndented = true };
-                                    var json = JsonSerializer.Serialize(doc, options);
-                                    Console.WriteLine("Formatted JSON:");
-                                    Console.WriteLine(json);
-                                }
-                            }
-                            catch (JsonException)
-                            {
-                                // If not valid JSON, just show as-is
-                                Console.WriteLine("Message is not valid JSON");
-                            }
-                            
-                            Console.WriteLine(new string('-', 50));
-                        }
-                        catch (ConsumeException e)
-                        {
-                            Console.WriteLine($"Error consuming message: {e.Error.Reason}");
-                        }
+                        var doc = JsonDocument.Parse(result.Message.Value);
+                        var options = new JsonSerializerOptions { WriteIndented = true };
+                        string prettyJson = JsonSerializer.Serialize(doc.RootElement, options);
+                        Console.WriteLine("Formatted JSON:");
+                        Console.WriteLine(prettyJson);
                     }
+                    catch
+                    {
+                        Console.WriteLine("Message is not valid JSON.");
+                    }
+
+                    Console.WriteLine(new string('-', 50));
+                    count++;
                 }
-                catch (OperationCanceledException)
-                {
-                    // This is normal when cancellation is requested
-                }
-                finally
-                {
-                    consumer.Close();
-                    Console.WriteLine("Consumer closed.");
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine("Consumption stopped.");
+            }
+            finally
+            {
+                consumer.Close();
+                Console.WriteLine("Consumer closed.");
             }
         }
     }
